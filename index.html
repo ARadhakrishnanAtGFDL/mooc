@@ -1,0 +1,213 @@
+---
+title: "project_AR"
+author: "(AHR) Aparna Radhakrishnan"
+date: "January 21, 2015"
+output: html_document
+---
+```
+#Project: Prediction Assignment Writeup, AR Jan 2014.
+#Goal: The goal of the project is to predict the manner in which exercise was done. This is the "classe" variable in the training set. The prediction model will be built based on a set of predictors in the training dataset. The model will be evaluated based on 20 different test cases. Predictor variable(s) choice and the method,prediction model strategy, use of xval, out of sample errors, testing the built prediction model on 20 different test cases will all be documented in this report. 
+
+#Acknowledgement: 
+#The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+#Most techniques illustrated in the Practical Machine Learning MOOC will be exercises. 
+```
+
+rm(list=ls())
+```
+#Step 1: Load DataSet
+#-----------------------
+#The training and test datasets are being loaded.
+#The outcome variable (to be predicted) is the classe variable. And, we shortlist a set of predictor variables to build the model from the pool of 160 features/variables in the input .csv.
+```
+```{r, echo=FALSE}
+mydata = read.csv("/Users/haarishvenkitachalam/Documents/Practical_ML/pml-training.csv")
+testdata <- read.csv("/Users/haarishvenkitachalam/Documents/Practical_ML/pml-testing.csv")
+```
+```
+#Step 2: Set up parameters as needed and load packages.
+#----------------------------------------------------------
+#We later tune the model to improve accuracy if tuning is set to 1. 
+#If refine is set to 1, we handle NAs in input.
+```
+```{r, echo=FALSE}
+#############################
+tuning = 1 
+refine = 1
+##############################
+
+library(caret)
+```
+
+```
+#Step 3: Data partitioning 
+#--------------------------------
+# We use 75% of input for training, 25% for testing our model before plugging in new data.
+```
+```{r, echo=FALSE}
+mydata1 = mydata
+inTrain = createDataPartition(y=mydata1$classe, p = 0.75,list=FALSE)
+#training
+training = mydata1[inTrain,]
+dim(training)
+testing = mydata1[-inTrain,]
+
+###### refine ######################
+if( refine == 1){
+training[is.na(training)] <- 0
+testing[is.na(testing)] <- 0
+testdata[is.na(testdata)] <- 0
+}
+```
+
+```
+#Step 4: Choosing Predictor variables for model building
+#-------------------------------------------------------------
+#explored variables in the datasets in batches using featurePlot(s). 
+#Random qplots on certain variable sets.
+#Removed highly-correlated fields using co()
+
+# FIND correlations to reduce no. of predictor vars
+#We are going to focus only on numeric variable types.
+
+```
+```{r, echo=FALSE}
+names <- colnames(training)
+ctr = 1
+skipcnt = 1
+skipvars <- list()
+for (cname in colnames(mydata1))
+{
+if(ctr < 160){
+ctr = ctr + 1}
+if((is.numeric(training[,cname])) & (is.numeric(training[,names[ctr]]))){
+df1 <-  data.frame(x=as.numeric(training[,cname]), y=training[,names[ctr]])
+#print(training[,cname])
+co = cor(df1)
+if(!is.na(co[1,2])){
+if((co[1,2]) > 0.75)
+{
+if(cname != names[ctr]){
+#print(paste("HIGH CORRELATION: ",ctr - 1,":",ctr,":", cname,"-versus-",names[ctr],co[1,2],sep=''))
+}}
+}
+}
+else{#print("skip")
+skipvars <- c(skipvars,c=cname)
+skipcnt = skipcnt + 1
+}
+}
+#[1] "HIGH CORRELATION: 10:11:yaw_belt-versus-total_accel_belt0.762614460244558"
+#[1] "HIGH CORRELATION: 44:45:magnet_belt_y-versus-magnet_belt_z0.790536702809631"
+#[1] "HIGH CORRELATION: 67:68:magnet_arm_y-versus-magnet_arm_z0.813503078909517"
+#...
+#Plot showing fairly high correlations between magnent_belt_z and magnet_belt_y. We choose to have magnet_belt_z in the model. 
+```
+```{r, echo=FALSE}
+qplot(magnet_belt_z,magnet_belt_y,color=classe,data = training)
+```
+
+```
+#featurePlot(x = training[,13:22], 
+#            y = training$classe, ..
+#-----------------------------------------        
+# After several iterations of featurePlot and random model building (and ranking using rf for sets of variables) and accuracy testing --also-- based on the number of missing values for certain variables, we arrive at these Final Set of Predictor variables: yaw_belt;accel_dumbbell_y;magnet_belt_z;gyros_forearm_y
+
+##### Let's look at a sample plot of these variables ranked in the order of importance using "rf".
+```
+```{r, echo=FALSE}
+rankModel1 <- train(classe~yaw_belt+accel_dumbbell_y+magnet_belt_z+gyros_forearm_y, data=mydata1, method="rf",verbose=FALSE)
+
+importance1 <- varImp(rankModel1, scale=FALSE)
+
+plot(importance1)
+```
+
+```
+#####################################################################################
+
+#Step 5: Training the model.
+#------------------------------
+#We use K-fold repeated cross-validation as the resampling method, 10 folds and repeated 3 times. ( A trainControl function is used. )
+######################################
+```
+```{r, echo=FALSE}
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+```
+
+```
+#The model was first built using the "gbm" (and trainControl repeatedcv ) with the chosen set of predictor variables, i.e #yaw_belt+accel_dumbbell_y+magnet_belt_z+gyros_forearm_y. 
+#Method: Generalized Boosted Regression Models (gbm)
+# The performance of the first model constructed gave about 80% accuracy. So, then a tuning parameter was exercised to look for improving the model, which is stated below within the if (tuning == 1) construct. 
+
+#The tuning parameter used is gbmGrid. The tuning parameter grid tuneGrid uses a set of choices for interaction depth, num. of trees, shrinkage and the the option with the best performance is used for the final model. (ref. Caret package documentation)
+```
+
+```
+#if(tuning != 1) {
+#model1 <- train(classe~yaw_belt+accel_dumbbell_y+magnet_belt_z+gyros_forearm_y, data=mydata1, #method="gbm"..) # model yields about 80% accuracy
+#}
+```
+```{r, echo=FALSE}
+if(tuning == 1){
+set.seed(626)
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
+                        n.trees = (1:10)*50,
+                        shrinkage = 0.1)
+model1 <- train(classe~yaw_belt+accel_dumbbell_y+magnet_belt_z+gyros_forearm_y, data = training,method = "gbm",trControl = control,verbose = FALSE,tuneGrid = gbmGrid)
+}
+
+
+#Step 5.1: Plot Performance of tuned model.
+#-------------------------------------------
+
+
+trellis.par.set(caretTheme())
+plot(model1)
+
+
+```
+```
+#########################################################################
+
+#Step 6: Applying Predictions and Model Evaluation
+#----------------------------------------------------
+##print confusion matrix - determine accuracy, sensitivity, etc.
+# Evaluation: Confusion Matrix shows 95-96% accuracy in-sample, whereas the accuracy reduces to 87% for out-of-sample illustrating a slight overfitting phenomenon. But, note that the results after tuning the model have improved by about 15%. 
+
+```
+```{r, echo=FALSE}
+predictions_train <- predict(model1, newdata = training)
+Ctrain <- confusionMatrix(predictions_train, training$classe)
+as.table(Ctrain)
+print(Ctrain)
+```
+```
+#Out-of-sample: (On testing (25% of input data)) (And, 87% accuracy for out-of-sample)
+```
+```{r, echo=FALSE}
+pred_traintest <- predict(model1, newdata=testing)
+Ctest <- confusionMatrix(pred_traintest, testing$classe)
+as.table(Ctest)
+print(Ctest)
+```
+```
+# Step 7. Applying Our Prediction Model on "new" data
+#-------------------------------------------------------
+
+#(On testing,problem questions)
+```
+#pred_test <- predict(model1, newdata=testdata)
+# print(pred_test)
+# [1] B A B C A C D A A A B C B A E E A B B B
+
+#################################
+
+# Step 8. Inference 
+#-------------------------
+# Thus, by using a gbm and a tuningGrid, the performance of the model has been improved, tending towards predicting the manner in which they did the exercise.
+# With additional computer resources, ranking of variables in the dataset (about 160) using "random forest" approach may have resulted in choosing a more optimal set of predictor variables and therby leading to better accuracy and more understanding of the variables that influence the outcome variable, classe. 
+
+```
+
+
